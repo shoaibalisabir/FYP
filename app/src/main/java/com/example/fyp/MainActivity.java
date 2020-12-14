@@ -8,8 +8,10 @@ import androidx.core.content.FileProvider;
 import android.app.Activity;
 import android.app.ProgressDialog;
 import android.content.Intent;
+import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Point;
 import android.graphics.Rect;
 import android.media.MediaPlayer;
 import android.net.Uri;
@@ -28,61 +30,119 @@ import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
+import com.google.android.gms.vision.label.ImageLabel;
 import com.google.firebase.ml.common.FirebaseMLException;
 import com.google.firebase.ml.common.modeldownload.FirebaseModelDownloadConditions;
 import com.google.firebase.ml.common.modeldownload.FirebaseModelManager;
 import com.google.firebase.ml.vision.FirebaseVision;
 import com.google.firebase.ml.vision.automl.FirebaseAutoMLLocalModel;
 import com.google.firebase.ml.vision.automl.FirebaseAutoMLRemoteModel;
+import com.google.firebase.ml.vision.barcode.FirebaseVisionBarcode;
+import com.google.firebase.ml.vision.barcode.FirebaseVisionBarcodeDetector;
 import com.google.firebase.ml.vision.common.FirebaseVisionImage;
 import com.google.firebase.ml.vision.document.FirebaseVisionDocumentText;
 import com.google.firebase.ml.vision.document.FirebaseVisionDocumentTextRecognizer;
 import com.google.firebase.ml.vision.label.FirebaseVisionImageLabel;
 import com.google.firebase.ml.vision.label.FirebaseVisionImageLabeler;
 import com.google.firebase.ml.vision.label.FirebaseVisionOnDeviceAutoMLImageLabelerOptions;
+import com.google.firebase.ml.vision.objects.FirebaseVisionObject;
+import com.google.firebase.ml.vision.objects.FirebaseVisionObjectDetector;
+import com.google.firebase.ml.vision.objects.FirebaseVisionObjectDetectorOptions;
 import com.google.firebase.ml.vision.text.FirebaseVisionText;
 import com.google.firebase.ml.vision.text.FirebaseVisionTextRecognizer;
 import com.google.firebase.ml.vision.text.RecognizedLanguage;
+
 import com.squareup.picasso.Picasso;
 
+import org.tensorflow.lite.DataType;
+import org.tensorflow.lite.Interpreter;
+import org.tensorflow.lite.support.common.FileUtil;
+import org.tensorflow.lite.support.common.TensorOperator;
+import org.tensorflow.lite.support.common.TensorProcessor;
+import org.tensorflow.lite.support.common.ops.NormalizeOp;
+import org.tensorflow.lite.support.image.ImageProcessor;
+import org.tensorflow.lite.support.image.TensorImage;
+import org.tensorflow.lite.support.image.ops.ResizeOp;
+import org.tensorflow.lite.support.image.ops.ResizeWithCropOrPadOp;
+import org.tensorflow.lite.support.label.TensorLabel;
+import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
+
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.FileStore;
 import java.text.SimpleDateFormat;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 
 public class MainActivity extends AppCompatActivity {
 
-    Button selectimage,detecttext,speak,currency;
+    Button selectimage, detecttext, detectcriticaldata
+            , currency, detectqrdata,detectobjects, detectmyscene;
     static final int REQUEST_IMAGE_CAPTURE = 1;
     Bitmap imageBitmap;
-    String currentimagepath=null;
-    TextToSpeech mTTS,mTTS1,mTTS2,mTTS3,mTTS4,mTTS5,mTTS6,mTTS7,mTTS8,mTTS9,mTTS10,mTTS11,mTTS12,mTTS13,mTTS14;
-    String texttospeak="";
-    String[] expirydate= {"expiry date","exp","days to expire","expiration date","daystoexpiry","daystoexpire","valid till","exp","expiry","used by"};
-    String[] mfgdate= {"mfg","mfg date","mfgdate","createdon","mfg.date"};
-    String[] bestbeforedate={"best before","best before date","bestbefore"};
-    String[] warninglabels={"warning label","warning","warninglabel","danger","keep out","hazard","danger"};
-    String[] cautionmessage={"caution","caution messages","cautions","be careful","do not cross"};
-    String[] ingredients={"recipe","ingredients","ingredient list"};
-    String[] proteinchart={"protein chart","protein"};
-    String mynote;
+    String currentimagepath = null;
+    TextToSpeech mTTS;
+    String texttospeak = "";
+    String[] expirydate = {"expiry date", "exp", "days to expire", "expiration date", "daystoexpiry", "daystoexpire", "valid till", "exp", "expiry", "used by"};
+    String[] mfgdate = {"mfg", "mfg date", "mfgdate", "createdon", "mfg.date"};
+    String[] bestbeforedate = {"best before", "best before date", "bestbefore"};
+    String[] warninglabels = {"warning label", "warning", "warninglabel", "danger", "keep out", "hazard", "danger"};
+    String[] cautionmessage = {"caution", "caution messages", "cautions", "be careful", "do not cross"};
+    String[] ingredients = {"recipe", "ingredients", "ingredient list"};
+    String[] proteinchart = {"protein chart", "protein"};
+    String mynote,myscene;
     float myconfidence;
-    float temp=-999;
-    String tempnote="";
+    float myconfidencescene;
+    float temp = -999;
+    float temp1 = -999;
+    String tempnote = "";
+    String tempscene="";
+
+    String qrdatatospeak = "";
+
+    String objectdetected="";
+
+
+    protected Interpreter tflite;
+    private static final float IMAGE_MEAN = 0.0f;
+    private static final float IMAGE_STD = 1.0f;
+    private static final float PROBABILITY_MEAN = 0.0f;
+    private static final float PROBABILITY_STD = 255.0f;
+    private MappedByteBuffer tfliteModel;
+    private TensorImage inputImageBuffer;
+    private TensorBuffer outputProbabilityBuffer;
+    private TensorProcessor probabilityProcessor;
+    private  int imageSizeX;
+    private  int imageSizeY;
+    private List<String> labels;
+
+
+    String gotexpirydate = "I Got Expiry Date";
+    String gotwarninglabels = "I Got Warning Labels";
+    String gotproteinchart = "I Got Protien Information";
+    String gotmfgdate = "I Got Manufacturing Date";
+    String gotbestbeforedate = "I Got Best Before Date";
+    String gotcaution = "I Got Caution Information";
+    String gotingredient = "I Got Ingridents Information";
 
 
     FirebaseAutoMLRemoteModel remoteModel; // For loading the model remotely
-    FirebaseVisionImageLabeler labeler; //For running the image labeler
+    FirebaseVisionImageLabeler labeler,labeler1; //For running the image labeler
     FirebaseVisionOnDeviceAutoMLImageLabelerOptions.Builder optionsBuilder; // Which option is use to run the labeler local or remotely
     ProgressDialog progressDialog; //Show the progress dialog while model is downloading...
     FirebaseModelDownloadConditions conditions; //Conditions to download the model
     FirebaseVisionImage image; // preparing the input image
-    private FirebaseAutoMLLocalModel localModel;
+    private FirebaseAutoMLLocalModel localModel,localModel1;
 
     MediaPlayer beepmediaplayer;
+
     @Override
     protected void onPause() {
         super.onPause();
@@ -94,47 +154,144 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onStart() {
         super.onStart();
-        Intent intent=new Intent(MainActivity.this,MySensorService.class);
+        Intent intent = new Intent(MainActivity.this, MySensorService.class);
         startService(intent);
     }
+
+
+    // Currency Notes
+
+    String got10ruppee = "Got Ten Ruppee Note";
+    String got20ruppee = "Got Twenty Ruppee Note";
+    String got50ruppee = "Got Fifty Ruppee Note";
+    String got100ruppee = "Got hundred Ruppee Note";
+    String got500ruppee = "Got Five Hundred Ruppee Note";
+    String got1000ruppee = "Got Thousand Ruppee Note";
+    String got5000ruppee = "Got Five Thousand Ruppee Note";
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        selectimage=findViewById(R.id.selectimage);
-        detecttext=findViewById(R.id.detecttext);
-        speak=findViewById(R.id.speak);
-        imageView=findViewById(R.id.imageview);
-        beepmediaplayer=MediaPlayer.create(this, R.raw.beep);
+        selectimage = findViewById(R.id.selectimage);
+        detecttext = findViewById(R.id.detecttext);
+        detectcriticaldata = findViewById(R.id.speak);
+        imageView = findViewById(R.id.imageview);
+        beepmediaplayer = MediaPlayer.create(this, R.raw.beep);
+        detectqrdata = findViewById(R.id.detectqrdata);
+        detectmyscene=findViewById(R.id.detectmyscene);
+
+        detectmyscene.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                String whatsceneisdetected=myscene+"   "+myconfidencescene;
+                Intent intent=new Intent(MainActivity.this,DetectObjects.class);
+                Log.d("gwwegewfg",whatsceneisdetected);
+                intent.putExtra("detctobjects",whatsceneisdetected);
+                startActivity(intent);
+            }
+        });
+
+        detectobjects=findViewById(R.id.detectobjects);
+
+        mTTS = new TextToSpeech(getApplicationContext(), new TextToSpeech.OnInitListener() {
+            @Override
+            public void onInit(int status) {
+                mTTS.setLanguage(Locale.ENGLISH);
+            }
+        });
 
 
-        currency=findViewById(R.id.currency);
+        try{
+            tflite=new Interpreter(loadmodelfile(this));
+        }catch (Exception e) {
+            e.printStackTrace();
+        }
+
+
+        detectqrdata.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (!qrdatatospeak.equals("")) {
+                    mTTS.speak("There is also Q R Data I got. Here it is",
+                            TextToSpeech.QUEUE_FLUSH, null);
+
+                    mTTS.speak(qrdatatospeak, TextToSpeech.QUEUE_FLUSH, null);
+
+                } else {
+                    mTTS.speak("There is No Q R Data.",
+                            TextToSpeech.QUEUE_FLUSH, null);
+                }
+            }
+        });
+
+        currency = findViewById(R.id.currency);
         currency.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Log.i("Note",mynote);
+                Log.i("Note", mynote);
+
+                ///// tflite //////////
+/*
+                int imageTensorIndex = 0;
+                int[] imageShape = tflite.getInputTensor(imageTensorIndex).shape(); // {1, height, width, 3}
+                imageSizeY = imageShape[1];
+                imageSizeX = imageShape[2];
+                DataType imageDataType = tflite.getInputTensor(imageTensorIndex).dataType();
+
+                int probabilityTensorIndex = 0;
+                int[] probabilityShape =
+                        tflite.getOutputTensor(probabilityTensorIndex).shape(); // {1, NUM_CLASSES}
+                DataType probabilityDataType = tflite.getOutputTensor(probabilityTensorIndex).dataType();
+
+                inputImageBuffer = new TensorImage(imageDataType);
+                outputProbabilityBuffer = TensorBuffer.createFixedSize(probabilityShape, probabilityDataType);
+                probabilityProcessor = new TensorProcessor.Builder().add(getPostprocessNormalizeOp()).build();
+
+                inputImageBuffer = loadImage(imageBitmap);
+
+                tflite.run(inputImageBuffer.getBuffer(),outputProbabilityBuffer.getBuffer().rewind());
+                showresult();
+*/
+                ////// tflite //////
+
+
                 Log.i("Confidence", String.valueOf(myconfidence));
-                if(mynote.equals("10")){
+                if (mynote.equals("10")) {
+//                    myspeaker();
+                    mTTS.speak(got10ruppee, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(MainActivity.this, "I got 10 Ruppee Note", Toast.LENGTH_SHORT).show();
                 }
-                if(mynote.equals("20")){
+                if (mynote.equals("20")) {
+//                    myspeaker();
+                    mTTS.speak(got20ruppee, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(MainActivity.this, "I got 20 Ruppee Note", Toast.LENGTH_SHORT).show();
                 }
-                if(mynote.equals("50")){
+                if (mynote.equals("50")) {
+//                    myspeaker();
+                    mTTS.speak(got50ruppee, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(MainActivity.this, "I got 50 Ruppee Note", Toast.LENGTH_SHORT).show();
                 }
-                if(mynote.equals("100")){
+                if (mynote.equals("100")) {
+//                    myspeaker();
+                    mTTS.speak(got100ruppee, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(MainActivity.this, "I got 100 Ruppee Note", Toast.LENGTH_SHORT).show();
                 }
-                if(mynote.equals("500")){
+                if (mynote.equals("500")) {
+//                    myspeaker();
+                    mTTS.speak(got500ruppee, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(MainActivity.this, "I got 500 Ruppee Note", Toast.LENGTH_SHORT).show();
                 }
-                if(mynote.equals("1000")){
+                if (mynote.equals("1000")) {
+//                    myspeaker();
+                    mTTS.speak(got1000ruppee, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(MainActivity.this, "I got 1000 Ruppee Note", Toast.LENGTH_SHORT).show();
                 }
-                if(mynote.equals("5000")){
+                if (mynote.equals("5000")) {
+//                    myspeaker();
+                    mTTS.speak(got5000ruppee, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(MainActivity.this, "I got 5000 Ruppee Note", Toast.LENGTH_SHORT).show();
                 }
             }
@@ -144,529 +301,118 @@ public class MainActivity extends AppCompatActivity {
         selectimage.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                String fileName="photo";
-                File storageDirectory=getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+                String fileName = "photo";
+                File storageDirectory = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
                 try {
-                    File imageFile=File.createTempFile(fileName,".jpg",storageDirectory);
-                    currentimagepath=imageFile.getAbsolutePath();
+                    File imageFile = File.createTempFile(fileName, ".jpg", storageDirectory);
+                    currentimagepath = imageFile.getAbsolutePath();
 
-                    Uri imageuri=FileProvider.getUriForFile(MainActivity.this,"com.example.fyp.fileprovider",imageFile);
+                    Uri imageuri = FileProvider.getUriForFile(MainActivity.this, "com.example.fyp.fileprovider", imageFile);
 
-                    Intent intent=new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-                    intent.putExtra(MediaStore.EXTRA_OUTPUT,imageuri);
-                    startActivityForResult(intent,REQUEST_IMAGE_CAPTURE);
+                    Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                    intent.putExtra(MediaStore.EXTRA_OUTPUT, imageuri);
+                    startActivityForResult(intent, REQUEST_IMAGE_CAPTURE);
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
             }
         });
 
+        detectobjects.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Intent intent=new Intent(MainActivity.this,DetectObjects.class);
+                Log.d("gwwegewfg",objectdetected);
+                intent.putExtra("detctobjects",objectdetected);
+                startActivity(intent);
+            }
+        });
+
         detecttext.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                detecttextfromimage();
-            }
-        });
-
-        mTTS=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS","Initilization Failed");
+                if (!texttospeak.equals("")) {
+                    mTTS.speak(texttospeak, TextToSpeech.QUEUE_FLUSH, null);
                 }
             }
         });
 
-        mTTS1=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS1.setLanguage(Locale.ENGLISH);
 
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS1","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS1","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS2=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS2.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS2","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS2","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS3=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS3.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS3","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS3","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS4=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS4.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS4","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS4","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS5=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS5.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS5","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS5","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS6=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS6.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS6","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS6","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS7=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS7.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS7","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS7","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS8=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS8.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS8","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS8","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS9=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS9.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS9","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS9","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS10=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS10.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS10","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS10","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS11=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS11.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS11","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS11","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS12=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS12.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS12","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS12","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS13=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS13.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS13","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS13","Initilization Failed");
-                }
-            }
-        });
-
-        mTTS14=new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS){
-                    int result = mTTS14.setLanguage(Locale.ENGLISH);
-
-                    if (result ==TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED){
-                        Log.e("mTTS14","Language not supported");
-                    }
-                    else {
-                        speak.setEnabled(true);
-                    }
-                }
-                else {
-                    Log.e("mTTS14","Initilization Failed");
-                }
-            }
-        });
-
-        speak.setOnClickListener(new View.OnClickListener() {
+        detectcriticaldata.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                myspeaker();
+                int x = 0;
+                if (!texttospeak.equals("")) {
+                    String small = texttospeak.toLowerCase();
+                    for (String s : expirydate) {
+                        if (small.contains(s)) {
+                            x = 1;
+                            mTTS.speak(gotexpirydate, TextToSpeech.QUEUE_FLUSH, null);
+                            Toast.makeText(MainActivity.this, "I Got Expiry", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    for (String warninglabel : warninglabels) {
+                        if (small.contains(warninglabel)) {
+                            x = 1;
+                            mTTS.speak(gotwarninglabels, TextToSpeech.QUEUE_FLUSH, null);
+                            Toast.makeText(MainActivity.this, "I Got warning", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    for (String s : proteinchart) {
+                        if (small.contains(s)) {
+                            x = 1;
+                            mTTS.speak(gotproteinchart, TextToSpeech.QUEUE_FLUSH, null);
+                            Toast.makeText(MainActivity.this, "I Got Protein", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    for (String s : mfgdate) {
+                        if (small.contains(s)) {
+                            x = 1;
+                            mTTS.speak(gotmfgdate, TextToSpeech.QUEUE_FLUSH, null);
+                            Toast.makeText(MainActivity.this, "I Got mfgdate", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    for (String s : bestbeforedate) {
+                        if (small.contains(s)) {
+                            x = 1;
+                            mTTS.speak(gotbestbeforedate, TextToSpeech.QUEUE_FLUSH, null);
+                            Toast.makeText(MainActivity.this, "I Got bestbeforedate", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    for (String s : cautionmessage) {
+                        if (small.contains(s)) {
+                            x = 1;
+                            mTTS.speak(gotcaution, TextToSpeech.QUEUE_FLUSH, null);
+                            Toast.makeText(MainActivity.this, "I Got caution", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    for (String ingredient : ingredients) {
+                        if (small.contains(ingredient)) {
+                            x = 1;
+                            mTTS.speak(gotingredient, TextToSpeech.QUEUE_FLUSH, null);
+                            Toast.makeText(MainActivity.this, "I Got ingridents", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                }
+                if (x == 0) {
+                    mTTS.speak("There is no Critical Information", TextToSpeech.QUEUE_FLUSH, null);
+                }
             }
         });
-
     }
 
-    private void myspeaker() {
-        mTTS.setPitch(1);
-        mTTS.setSpeechRate(1);
-
-        mTTS1.setPitch(1);
-        mTTS1.setSpeechRate(1);
-
-        mTTS2.setPitch(1);
-        mTTS2.setSpeechRate(1);
-
-        mTTS3.setPitch(1);
-        mTTS3.setSpeechRate(1);
-
-        mTTS4.setPitch(1);
-        mTTS4.setSpeechRate(1);
-
-        mTTS5.setPitch(1);
-        mTTS5.setSpeechRate(1);
-
-        mTTS6.setPitch(1);
-        mTTS6.setSpeechRate(1);
-
-        mTTS7.setPitch(1);
-        mTTS7.setSpeechRate(1);
-
-        //// Currency Notes
-
-        mTTS8.setPitch(1);
-        mTTS8.setSpeechRate(1);
-
-        mTTS9.setPitch(1);
-        mTTS9.setSpeechRate(1);
-
-        mTTS10.setPitch(1);
-        mTTS10.setSpeechRate(1);
-
-        mTTS11.setPitch(1);
-        mTTS11.setSpeechRate(1);
-
-        mTTS12.setPitch(1);
-        mTTS12.setSpeechRate(1);
-
-        mTTS13.setPitch(1);
-        mTTS13.setSpeechRate(1);
-
-        mTTS14.setPitch(1);
-        mTTS14.setSpeechRate(1);
-
-
-        int a=0,b=0,c=0,d=0,e=0,f=0,g=0,h=0;
-
-        if(!tempnote.isEmpty()){
-            h=1;
-        }
-
-        String gotexpirydate="Got Expiry Date";
-        String gotwarninglabels="Got Warning Labels";
-        String gotproteinchart="Got Protien Information";
-        String gotmfgdate="Got Manufacturing Date";
-        String gotbestbeforedate="Got Best Before Date";
-        String gotcaution="Got Caution Information";
-        String gotingredient="Got Ingridents Information";
-
-        // Currency Notes
-
-        String got10ruppee="Got Ten Ruppee Note";
-        String got20ruppee="Got Twenty Ruppee Note";
-        String got50ruppee="Got Fifty Ruppee Note";
-        String got100ruppee="Got hundred Ruppee Note";
-        String got500ruppee="Got Five Hundred Ruppee Note";
-        String got1000ruppee="Got Thousand Ruppee Note";
-        String got5000ruppee="Got Five Thousand Ruppee Note";
-
-        if(!texttospeak.equals("")){
-            String small=texttospeak.toLowerCase();
-            for(int i=0;i<expirydate.length;++i){
-                Toast.makeText(this, "Inside Loop", Toast.LENGTH_SHORT).show();
-                if(small.contains(expirydate[i])){
-                    Toast.makeText(this, "Got Expiry", Toast.LENGTH_SHORT).show();
-                    a=1;
-                }
-            }
-            for(int i=0;i<warninglabels.length;++i){
-                Toast.makeText(this, "Inside Loop", Toast.LENGTH_SHORT).show();
-                if(small.contains(warninglabels[i])){
-                    Toast.makeText(this, "Got warning", Toast.LENGTH_SHORT).show();
-                    b=1;
-                }
-            }
-            for(int i=0;i<proteinchart.length;++i){
-                Toast.makeText(this, "Inside Loop", Toast.LENGTH_SHORT).show();
-                if(small.contains(proteinchart[i])){
-                    Toast.makeText(this, "Got Protein", Toast.LENGTH_SHORT).show();
-                    c=1;
-                }
-            }
-            for(int i=0;i<mfgdate.length;++i){
-                Toast.makeText(this, "Inside Loop", Toast.LENGTH_SHORT).show();
-                if(small.contains(mfgdate[i])){
-                    Toast.makeText(this, "Got mfgdate", Toast.LENGTH_SHORT).show();
-                    d=1;
-                }
-            }
-            for(int i=0;i<bestbeforedate.length;++i){
-                Toast.makeText(this, "Inside Loop", Toast.LENGTH_SHORT).show();
-                if(small.contains(bestbeforedate[i])){
-                    Toast.makeText(this, "Got bestbeforedate", Toast.LENGTH_SHORT).show();
-                    e=1;
-                }
-            }
-            for(int i=0;i<cautionmessage.length;++i){
-                Toast.makeText(this, "Inside Loop", Toast.LENGTH_SHORT).show();
-                if(small.contains(cautionmessage[i])){
-                    Toast.makeText(this, "Got caution", Toast.LENGTH_SHORT).show();
-                    f=1;
-                }
-            }
-            for(int i=0;i<ingredients.length;++i){
-                Toast.makeText(this, "Inside Loop", Toast.LENGTH_SHORT).show();
-                if(small.contains(ingredients[i])){
-                    Toast.makeText(this, "Got ingridents", Toast.LENGTH_SHORT).show();
-                    g=1;
-                }
-            }
-            if(a==1){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS1.speak(gotexpirydate,TextToSpeech.QUEUE_FLUSH,null);
-            }
-            if(b==1){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS2.speak(gotwarninglabels,TextToSpeech.QUEUE_FLUSH,null);
-            }
-            if(c==1){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS3.speak(gotproteinchart,TextToSpeech.QUEUE_FLUSH,null);
-            }
-            if(d==1){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS4.speak(gotmfgdate,TextToSpeech.QUEUE_FLUSH,null);
-            }
-            if(e==1){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS5.speak(gotbestbeforedate,TextToSpeech.QUEUE_FLUSH,null);
-            }
-            if(f==1){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS6.speak(gotcaution,TextToSpeech.QUEUE_FLUSH,null);
-            }
-            if(g==1){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS7.speak(gotingredient,TextToSpeech.QUEUE_FLUSH,null);
-            }
-        }
-
-        if(h==1){
-            if(tempnote.equals("10")){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                Toast.makeText(this, "Inside 10", Toast.LENGTH_SHORT).show();
-                mTTS8.speak(got10ruppee,TextToSpeech.QUEUE_FLUSH,null);
-            }
-            if(tempnote.equals("20")){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS9.speak(got20ruppee,TextToSpeech.QUEUE_FLUSH,null);
-            }
-            if(tempnote.equals("50")){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS10.speak(got50ruppee,TextToSpeech.QUEUE_FLUSH,null);
-            }
-            if(tempnote.equals("100")){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS11.speak(got100ruppee,TextToSpeech.QUEUE_FLUSH,null);
-            }
-            if(tempnote.equals("500")){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS12.speak(got500ruppee,TextToSpeech.QUEUE_FLUSH,null);
-            }
-            if(tempnote.equals("1000")){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS13.speak(got1000ruppee,TextToSpeech.QUEUE_FLUSH,null);
-            }
-            if(tempnote.equals("5000")){
-                beepmediaplayer.start();
-                beepmediaplayer.start();
-                mTTS14.speak(got5000ruppee,TextToSpeech.QUEUE_FLUSH,null);
-            }
-        }
-        mTTS.speak(texttospeak,TextToSpeech.QUEUE_FLUSH,null);
+    private MappedByteBuffer loadmodelfile(MainActivity mainActivity) throws IOException {
+        AssetFileDescriptor fileDescriptor=mainActivity.getAssets().openFd("model.tflite");
+        FileInputStream inputStream=new FileInputStream(fileDescriptor.getFileDescriptor());
+        FileChannel fileChannel=inputStream.getChannel();
+        long startoffset = fileDescriptor.getStartOffset();
+        long declaredLength=fileDescriptor.getDeclaredLength();
+        return fileChannel.map(FileChannel.MapMode.READ_ONLY,startoffset,declaredLength);
     }
 
     @Override
     protected void onDestroy() {
-        if (mTTS!=null){
+        if (mTTS != null) {
             mTTS.stop();
             mTTS.shutdown();
         }
@@ -675,12 +421,13 @@ public class MainActivity extends AppCompatActivity {
 
 
     private void detecttextfromimage() {
-        FirebaseVisionImage image=FirebaseVisionImage.fromBitmap(imageBitmap);
-        FirebaseVisionDocumentTextRecognizer detector= FirebaseVision.getInstance().getCloudDocumentTextRecognizer();
+        FirebaseVisionImage image = FirebaseVisionImage.fromBitmap(imageBitmap);
+        FirebaseVisionDocumentTextRecognizer detector = FirebaseVision.getInstance().getCloudDocumentTextRecognizer();
         detector.processImage(image)
                 .addOnSuccessListener(new OnSuccessListener<FirebaseVisionDocumentText>() {
                     @Override
                     public void onSuccess(FirebaseVisionDocumentText result) {
+                        Log.d("theText", String.valueOf(result));
                         displaytextfromimage(result);
 
                     }
@@ -688,7 +435,7 @@ public class MainActivity extends AppCompatActivity {
                 .addOnFailureListener(new OnFailureListener() {
                     @Override
                     public void onFailure(@NonNull Exception e) {
-                        Toast.makeText(MainActivity.this, "Error : "+ e.getMessage(), Toast.LENGTH_SHORT).show();
+                        Toast.makeText(MainActivity.this, "Error : " + e.getMessage(), Toast.LENGTH_SHORT).show();
                     }
                 });
     }
@@ -696,8 +443,8 @@ public class MainActivity extends AppCompatActivity {
     private void displaytextfromimage(FirebaseVisionDocumentText result) {
 
         texttospeak = result.getText();
+        Log.d("thisisthetextigot", texttospeak);
         Toast.makeText(this, "Got The Text", Toast.LENGTH_SHORT).show();
-
     }
 
     private void setLabelerFromLocalModel(Uri uri) {
@@ -718,6 +465,24 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void setLabelerFromLocalModelforscene(Uri uri) {
+        localModel1 = new FirebaseAutoMLLocalModel.Builder()
+                .setAssetFilePath("model/manifest1.json")
+                .build();
+        try {
+            FirebaseVisionOnDeviceAutoMLImageLabelerOptions options =
+                    new FirebaseVisionOnDeviceAutoMLImageLabelerOptions.Builder(localModel1)
+                            .setConfidenceThreshold(0.0f)  // Evaluate your model in the Firebase console
+                            // to determine an appropriate value.
+                            .build();
+            labeler1 = FirebaseVision.getInstance().getOnDeviceAutoMLImageLabeler(options);
+            FirebaseVisionImage image = FirebaseVisionImage.fromBitmap(imageBitmap);
+            processImageLabeler1(labeler1, image);
+        } catch (FirebaseMLException e) {
+            // ...
+        }
+    }
+
     private void processImageLabeler(FirebaseVisionImageLabeler labeler, FirebaseVisionImage image) {
         labeler.processImage(image).addOnCompleteListener(new OnCompleteListener<List<FirebaseVisionImageLabel>>() {
             @Override
@@ -725,15 +490,42 @@ public class MainActivity extends AppCompatActivity {
                 for (FirebaseVisionImageLabel label : task.getResult()) {
                     String eachlabel = label.getText().toUpperCase();
                     float confidence = label.getConfidence();
-                    Log.i("label",eachlabel);
+                    Log.i("label", eachlabel);
                     Log.i("confidence", String.valueOf(confidence));
-                    if(confidence>temp){
-                        temp=confidence;
-                        tempnote=eachlabel;
+                    if (confidence > temp) {
+                        temp = confidence;
+                        tempnote = eachlabel;
                     }
                 }
-                myconfidence=temp;
-                mynote=tempnote;
+                myconfidence = temp;
+                mynote = tempnote;
+                Log.d("mynote", mynote + " " + myconfidence);
+            }
+        }).addOnFailureListener(new OnFailureListener() {
+            @Override
+            public void onFailure(@NonNull Exception e) {
+                Log.e("OnFail", "" + e);
+                Toast.makeText(MainActivity.this, "Something went wrong! " + e, Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void processImageLabeler1(FirebaseVisionImageLabeler labeler1, FirebaseVisionImage image) {
+        labeler1.processImage(image).addOnCompleteListener(new OnCompleteListener<List<FirebaseVisionImageLabel>>() {
+            @Override
+            public void onComplete(@NonNull Task<List<FirebaseVisionImageLabel>> task) {
+                for (FirebaseVisionImageLabel label : task.getResult()) {
+                    String eachlabel = label.getText().toUpperCase();
+                    float confidence = label.getConfidence();
+                    Log.d("fijwejhfiuew", eachlabel);
+                    Log.d("fijwejhfiuew", String.valueOf(confidence));
+                    if (confidence > temp1) {
+                        temp1 = confidence;
+                        tempscene = eachlabel;
+                    }
+                }
+                myconfidencescene=temp1;
+                myscene=tempscene;
             }
         }).addOnFailureListener(new OnFailureListener() {
             @Override
@@ -769,8 +561,8 @@ public class MainActivity extends AppCompatActivity {
                 }).addOnFailureListener(new OnFailureListener() {
             @Override
             public void onFailure(@NonNull Exception e) {
-                Log.e("TAG", "onFailure: "+e );
-                Toast.makeText(MainActivity.this, "err"+e, Toast.LENGTH_SHORT).show();
+                Log.e("TAG", "onFailure: " + e);
+                Toast.makeText(MainActivity.this, "err" + e, Toast.LENGTH_SHORT).show();
             }
         });
     }
@@ -789,22 +581,173 @@ public class MainActivity extends AppCompatActivity {
                 });
     }
 
+    private TensorImage loadImage(final Bitmap bitmap) {
+        // Loads bitmap into a TensorImage.
+        inputImageBuffer.load(bitmap);
+
+        // Creates processor for the TensorImage.
+        int cropSize = Math.min(bitmap.getWidth(), bitmap.getHeight());
+        // TODO(b/143564309): Fuse ops inside ImageProcessor.
+        ImageProcessor imageProcessor =
+                new ImageProcessor.Builder()
+                        .add(new ResizeWithCropOrPadOp(cropSize, cropSize))
+                        .add(new ResizeOp(imageSizeX, imageSizeY, ResizeOp.ResizeMethod.NEAREST_NEIGHBOR))
+                        .add(getPreprocessNormalizeOp())
+                        .build();
+        return imageProcessor.process(inputImageBuffer);
+    }
+    private TensorOperator getPreprocessNormalizeOp() {
+        return new NormalizeOp(IMAGE_MEAN, IMAGE_STD);
+    }
+    private TensorOperator getPostprocessNormalizeOp(){
+        return new NormalizeOp(PROBABILITY_MEAN, PROBABILITY_STD);
+    }
+    private void showresult(){
+
+        try{
+            labels = FileUtil.loadLabels(this,"newdict.txt");
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+        Map<String, Float> labeledProbability =
+                new TensorLabel(labels, probabilityProcessor.process(outputProbabilityBuffer))
+                        .getMapWithFloatValue();
+        float maxValueInMap =(Collections.max(labeledProbability.values()));
+
+        for (Map.Entry<String, Float> entry : labeledProbability.entrySet()) {
+            if (entry.getValue()==maxValueInMap) {
+                Log.d("fwiejfbjiwf",entry.getKey());
+            }
+        }
+    }
+
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
+        qrdatatospeak = "";
+        objectdetected="";
+
         if (requestCode == REQUEST_IMAGE_CAPTURE) {
             // Make sure the request was successful
             if (resultCode == RESULT_OK) {
                 Uri u = Uri.fromFile(new File(currentimagepath));
-                Bitmap bitmap= BitmapFactory.decodeFile(currentimagepath);
-                imageBitmap=bitmap;
+                Bitmap bitmap = BitmapFactory.decodeFile(currentimagepath);
+                imageBitmap = bitmap;
                 Picasso.get().setLoggingEnabled(true);
-                Picasso.get().load(u).resize(300,300).onlyScaleDown().into(imageView);
+                Picasso.get().load(u).resize(300, 300).onlyScaleDown().into(imageView);
                 Toast.makeText(this, "Uploaded", Toast.LENGTH_SHORT).show();
                 //currecny Detector
                 setLabelerFromLocalModel(u);
+                //text detector
+                detecttextfromimage();
+                //scene detector
+                setLabelerFromLocalModelforscene(u);
+
+                //////// object detection ///////////
+
+
+                FirebaseVisionImage image = null;
+                image = FirebaseVisionImage.fromBitmap(bitmap);
+
+                FirebaseVisionImageLabeler labeler=FirebaseVision.getInstance()
+                        .getOnDeviceImageLabeler();
+
+                labeler.processImage(image).addOnSuccessListener(new OnSuccessListener<List<FirebaseVisionImageLabel>>() {
+                    @Override
+                    public void onSuccess(List<FirebaseVisionImageLabel> labels) {
+                        for (FirebaseVisionImageLabel label : labels) {
+                            String text = label.getText();
+                            float confidence = label.getConfidence();
+                            String entityid = label.getEntityId();
+
+                            Log.d("FirebaseImageObjects","Text:"+text+"     " +
+                                    "confidence:"+confidence+"      "+
+                                    "entityid:"+entityid);
+
+                            Toast.makeText(MainActivity.this, text, Toast.LENGTH_SHORT).show();
+                            objectdetected=objectdetected+text;
+                            objectdetected=objectdetected+"  ";
+
+
+                        }
+                        Toast.makeText(MainActivity.this, "Just above Log:"+objectdetected, Toast.LENGTH_SHORT).show();
+                        Log.d("detctobjects", objectdetected);
+
+                    }
+                })
+                        .addOnFailureListener(new OnFailureListener() {
+                            @Override
+                            public void onFailure(@NonNull Exception e) {
+                                Log.d("FirebaseImageObjects","Error "+e);
+                            }
+                        });
+
+
+                ///////// object detection //////////
+
+
+                ///////////Bar code/////////////////
+
+                FirebaseVisionBarcodeDetector detector = FirebaseVision.getInstance()
+                        .getVisionBarcodeDetector();
+
+                final Task<List<FirebaseVisionBarcode>> result = detector.
+                        detectInImage(FirebaseVisionImage.fromBitmap(bitmap)).
+                        addOnSuccessListener(new OnSuccessListener<List<FirebaseVisionBarcode>>() {
+                            @Override
+                            public void onSuccess(List<FirebaseVisionBarcode> firebaseVisionBarcodes) {
+                                for (FirebaseVisionBarcode barcode : firebaseVisionBarcodes) {
+                                    Rect bounds = barcode.getBoundingBox();
+                                    Toast.makeText(MainActivity.this, "Detecting Objects", Toast.LENGTH_SHORT).show();
+                                    Log.d("FirebaseVisionBarcode", "Bounds " + bounds);
+                                    Point[] corners = barcode.getCornerPoints();
+
+                                    Log.d("FirebaseVisionBarcode", "Corners " + corners);
+
+                                    String rawValue = barcode.getRawValue();
+
+                                    qrdatatospeak = rawValue;
+
+                                    Log.d("FirebaseVisionBarcode", "RawValue " + rawValue);
+
+
+                                    int valueType = barcode.getValueType();
+                                    switch (valueType) {
+                                        case FirebaseVisionBarcode.TYPE_WIFI:
+                                            String ssid = Objects.requireNonNull(barcode.getWifi()).getSsid();
+                                            String password = barcode.getWifi().getPassword();
+                                            int type = barcode.getWifi().getEncryptionType();
+
+                                            Log.d("FirebaseVisionBarcode", "Ssid "
+                                                    + ssid);
+                                            Log.d("FirebaseVisionBarcode",
+                                                    "Password " + password);
+                                            Log.d("FirebaseVisionBarcode", "Type " +
+                                                    "" + type);
+                                            break;
+                                        case FirebaseVisionBarcode.TYPE_URL:
+                                            String title = Objects.requireNonNull(barcode.getUrl()).getTitle();
+                                            String url = barcode.getUrl().getUrl();
+                                            Log.d("FirebaseVisionBarcode",
+                                                    "Title " + title);
+                                            Log.d("FirebaseVisionBarcode",
+                                                    "Url " + url);
+                                            break;
+                                    }
+                                }
+                            }
+                        })
+                        .addOnFailureListener(new OnFailureListener() {
+                            @Override
+                            public void onFailure(@NonNull Exception e) {
+                                Log.d("FirebaseVisionBarcode", "Error " + e);
+                            }
+                        });
+
+                //////////////bar code////////////
+
 
             }
         }

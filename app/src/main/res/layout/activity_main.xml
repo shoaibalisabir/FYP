@@ -46,6 +46,18 @@
         android:text="Detect Text"
         android:id="@+id/detecttext"
         android:textAllCaps="false"
+        android:layout_above="@+id/detectqrdata"
+        android:background="@color/colorPrimary"
+        android:textColor="#ffffff"
+        android:textStyle="bold">
+    </Button>
+
+    <Button
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Detect QR Data"
+        android:id="@+id/detectqrdata"
+        android:textAllCaps="false"
         android:layout_above="@+id/speak"
         android:background="@color/colorPrimary"
         android:textColor="#ffffff"
@@ -55,8 +67,32 @@
     <Button
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Speak"
+        android:text="Detect Critical Data"
         android:id="@+id/speak"
+        android:textAllCaps="false"
+        android:layout_above="@id/detectmyscene"
+        android:background="@color/colorPrimaryDark"
+        android:textColor="#ffffff"
+        android:textStyle="bold">
+    </Button>
+
+    <Button
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Detect Scene"
+        android:id="@+id/detectmyscene"
+        android:textAllCaps="false"
+        android:layout_above="@id/detectobjects"
+        android:background="@color/colorPrimaryDark"
+        android:textColor="#ffffff"
+        android:textStyle="bold">
+    </Button>
+
+    <Button
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Detect Objects"
+        android:id="@+id/detectobjects"
         android:textAllCaps="false"
         android:layout_alignParentBottom="true"
         android:background="@color/colorPrimaryDark"

@@ -28,13 +28,16 @@ import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
+import com.google.android.gms.vision.Frame;
 import com.google.android.material.card.MaterialCardView;
 import com.google.firebase.ml.common.FirebaseMLException;
 import com.google.firebase.ml.vision.FirebaseVision;
 import com.google.firebase.ml.vision.automl.FirebaseAutoMLLocalModel;
 import com.google.firebase.ml.vision.barcode.FirebaseVisionBarcode;
 import com.google.firebase.ml.vision.barcode.FirebaseVisionBarcodeDetector;
+import com.google.firebase.ml.vision.barcode.FirebaseVisionBarcodeDetectorOptions;
 import com.google.firebase.ml.vision.common.FirebaseVisionImage;
+import com.google.firebase.ml.vision.common.FirebaseVisionImageMetadata;
 import com.google.firebase.ml.vision.document.FirebaseVisionDocumentText;
 import com.google.firebase.ml.vision.document.FirebaseVisionDocumentTextRecognizer;
 import com.google.firebase.ml.vision.label.FirebaseVisionImageLabel;
@@ -56,13 +59,14 @@ import java.util.Objects;
 public class FypActivity extends AppCompatActivity {
 
     // numbers is use to select the specific option among all options
+
     int counter=0;
     int action;
     int keycode;
 
     PrintedPdfDocument pdfDocument;
 
-    //Pick image path
+    //Pick image path for different modules
 
     String currentimagepath = null;
     static final int REQUEST_IMAGE_CAPTURE1 = 1;
@@ -71,39 +75,41 @@ public class FypActivity extends AppCompatActivity {
     static final int REQUEST_IMAGE_CAPTURE4 = 4;
     static final int REQUEST_IMAGE_CAPTURE5 = 5;
 
-    //last pressed key
+    //last pressed key inorder to detect and move the selected item to next module
+
     int lastpressed=0;
 
-    //textstorage
+    //imageBitemap var is used to store all the images and overwrite the previous one
 
     Bitmap imageBitmap;
+
+    //texttospeak is used to store the text reterived from the image by the firebase from document
+
     String texttospeak = "";
+
+    //texttospeakforcritical is used to store the critical info reterived from the image by the firebase from document
+
     String texttospeakforcritical = "";
 
-
-
-
     //Audio
-    TextToSpeech mTTS;
 
+    TextToSpeech mTTS;
 
     //qrcode reader
 
     String qrdatatospeak = "";
 
+    //objectsdetected for scene if %age of accuracy is less than 50%
 
-    //objectsdetected
     String objectdetected="";
-
 
     //image labler
 
     private FirebaseAutoMLLocalModel localModel,localModel1;
 
-
     //For running the image labeler
-    FirebaseVisionImageLabeler labeler,labeler1;
 
+    FirebaseVisionImageLabeler labeler,labeler1;
 
     //currency and scence detection initializaiton
 
@@ -114,8 +120,6 @@ public class FypActivity extends AppCompatActivity {
     float temp1 = -999;
     String tempnote = "";
     String tempscene="";
-
-
 
     // This Material Card is used for the text speaking module
     MaterialCardView textviewcard;
@@ -128,7 +132,6 @@ public class FypActivity extends AppCompatActivity {
     // This Material Card is used for the scene detection module
     MaterialCardView sceneviewcard;
 
-
     //critical information strings
 
     String gotexpirydate = "I Got Expiry Date";
@@ -139,7 +142,7 @@ public class FypActivity extends AppCompatActivity {
     String gotcaution = "I Got Caution Information";
     String gotingredient = "I Got Ingridents Information";
 
-
+    //labels to check in the critical information text
 
     String[] expirydate = {"expiry date", "exp", "days to expire", "expiration date", "daystoexpiry", "daystoexpire", "valid till", "exp", "expiry", "used by"};
     String[] mfgdate = {"mfg", "mfg date", "mfgdate", "createdon", "mfg.date"};
@@ -149,8 +152,7 @@ public class FypActivity extends AppCompatActivity {
     String[] ingredients = {"recipe", "ingredients", "ingredient list"};
     String[] proteinchart = {"protein chart", "protein"};
 
-
-    // Currency Notes
+    // Currency Notes text to speak depending upon the probability of the detection
 
     String got10ruppee = "Got Ten Ruppee Note";
     String got20ruppee = "Got Twenty Ruppee Note";
@@ -160,6 +162,10 @@ public class FypActivity extends AppCompatActivity {
     String got1000ruppee = "Got Thousand Ruppee Note";
     String got5000ruppee = "Got Five Thousand Ruppee Note";
 
+    //var initialization inorder to get the content inside the qr-code
+
+    FirebaseVisionBarcodeDetectorOptions options;
+    FirebaseVisionBarcodeDetector detector;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -187,8 +193,7 @@ public class FypActivity extends AppCompatActivity {
 
         sceneviewcard=findViewById(R.id.sceneviewcard);
 
-
-        //mTTs initiallization
+        //text speech initiallization
 
         mTTS = new TextToSpeech(getApplicationContext(), new TextToSpeech.OnInitListener() {
             @Override
@@ -199,6 +204,8 @@ public class FypActivity extends AppCompatActivity {
 
 
     }
+
+    // Dispatch key events inorder to detect the volume button pressed and perform events on the basis of those events
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
@@ -223,6 +230,9 @@ public class FypActivity extends AppCompatActivity {
         }
         return super.dispatchKeyEvent(event);
     }
+
+    //optionselected function is called depending upon the event called by used which is eith up or down
+    //By using the up button we move the option to next module and upon pressing the lower button we opt that option
 
     private void optionselected() {
         Toast.makeText(this, "Down Key", Toast.LENGTH_SHORT).show();
@@ -276,6 +286,8 @@ public class FypActivity extends AppCompatActivity {
 //            mTTS.stop();
 //        }
 
+        // Call image pick from the gallary and send module var along to detect the module working...
+
         int myvar=x;
         String fileName = "photo";
         File storageDirectory = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
@@ -294,17 +306,26 @@ public class FypActivity extends AppCompatActivity {
         }
     }
 
+    //nextitem will be marked and focused by rounding yellow border
+    //and the last one and the other one are un-marked
+
     @SuppressLint("ResourceAsColor")
     private void nextitem() {
         counter++;
         if(counter==1){
             Toast.makeText(this, "Counter 1", Toast.LENGTH_SHORT).show();
-            textviewcard.setStrokeColor(R.color.stroke);
+            textviewcard.setStrokeColor(R.color.myyellow);
+            textviewcard.setStrokeWidth(25);
 
-            currencyviewcard.setStrokeColor(R.color.NoStroke);
-            qrcodeviewcard.setStrokeColor(R.color.NoStroke);
-            criticalviewcard.setStrokeColor(R.color.NoStroke);
-            sceneviewcard.setStrokeColor(R.color.NoStroke);
+
+            currencyviewcard.setStrokeWidth(0);
+            qrcodeviewcard.setStrokeWidth(0);
+            criticalviewcard.setStrokeWidth(0);
+            sceneviewcard.setStrokeWidth(0);
+//            currencyviewcard.setStrokeColor(R.color.NoStroke);
+//            qrcodeviewcard.setStrokeColor(R.color.NoStroke);
+//            criticalviewcard.setStrokeColor(R.color.NoStroke);
+//            sceneviewcard.setStrokeColor(R.color.NoStroke);
 
             mTTS.speak("Text Detection", TextToSpeech.QUEUE_FLUSH, null);
 
@@ -313,12 +334,18 @@ public class FypActivity extends AppCompatActivity {
         }
         else if(counter==2){
             Toast.makeText(this, "Counter 2", Toast.LENGTH_SHORT).show();
-            currencyviewcard.setStrokeColor(R.color.stroke);
+            currencyviewcard.setStrokeColor(R.color.myyellow);
+            currencyviewcard.setStrokeWidth(25);
 
-            qrcodeviewcard.setStrokeColor(R.color.NoStroke);
-            criticalviewcard.setStrokeColor(R.color.NoStroke);
-            sceneviewcard.setStrokeColor(R.color.NoStroke);
-            textviewcard.setStrokeColor(R.color.NoStroke);
+
+//            qrcodeviewcard.setStrokeColor(R.color.NoStroke);
+//            criticalviewcard.setStrokeColor(R.color.NoStroke);
+//            sceneviewcard.setStrokeColor(R.color.NoStroke);
+//            textviewcard.setStrokeColor(R.color.NoStroke);
+            qrcodeviewcard.setStrokeWidth(0);
+            criticalviewcard.setStrokeWidth(0);
+            sceneviewcard.setStrokeWidth(0);
+            textviewcard.setStrokeWidth(0);
 
             mTTS.speak("Currency Detection", TextToSpeech.QUEUE_FLUSH, null);
 
@@ -326,12 +353,17 @@ public class FypActivity extends AppCompatActivity {
         }
         else if(counter==3){
             Toast.makeText(this, "Counter 3", Toast.LENGTH_SHORT).show();
-            qrcodeviewcard.setStrokeColor(R.color.stroke);
+            qrcodeviewcard.setStrokeColor(R.color.myyellow);
+            qrcodeviewcard.setStrokeWidth(25);
 
-            criticalviewcard.setStrokeColor(R.color.NoStroke);
-            sceneviewcard.setStrokeColor(R.color.NoStroke);
-            textviewcard.setStrokeColor(R.color.NoStroke);
-            currencyviewcard.setStrokeColor(R.color.NoStroke);
+//            criticalviewcard.setStrokeColor(R.color.NoStroke);
+//            sceneviewcard.setStrokeColor(R.color.NoStroke);
+//            textviewcard.setStrokeColor(R.color.NoStroke);
+//            currencyviewcard.setStrokeColor(R.color.NoStroke);
+            criticalviewcard.setStrokeWidth(0);
+            sceneviewcard.setStrokeWidth(0);
+            textviewcard.setStrokeWidth(0);
+            currencyviewcard.setStrokeWidth(0);
 
             mTTS.speak("Q R Code Detection", TextToSpeech.QUEUE_FLUSH, null);
 
@@ -339,12 +371,17 @@ public class FypActivity extends AppCompatActivity {
         }
         else if(counter==4){
             Toast.makeText(this, "Counter 4", Toast.LENGTH_SHORT).show();
-            criticalviewcard.setStrokeColor(R.color.stroke);
+            criticalviewcard.setStrokeColor(R.color.myyellow);
+            criticalviewcard.setStrokeWidth(25);
 
-            sceneviewcard.setStrokeColor(R.color.NoStroke);
-            textviewcard.setStrokeColor(R.color.NoStroke);
-            currencyviewcard.setStrokeColor(R.color.NoStroke);
-            qrcodeviewcard.setStrokeColor(R.color.NoStroke);
+//            sceneviewcard.setStrokeColor(R.color.NoStroke);
+//            textviewcard.setStrokeColor(R.color.NoStroke);
+//            currencyviewcard.setStrokeColor(R.color.NoStroke);
+//            qrcodeviewcard.setStrokeColor(R.color.NoStroke);
+            sceneviewcard.setStrokeWidth(0);
+            textviewcard.setStrokeWidth(0);
+            currencyviewcard.setStrokeWidth(0);
+            qrcodeviewcard.setStrokeWidth(0);
 
             mTTS.speak("Critical Information Detection", TextToSpeech.QUEUE_FLUSH, null);
 
@@ -352,12 +389,17 @@ public class FypActivity extends AppCompatActivity {
         }
         else if(counter==5){
             Toast.makeText(this, "Counter 5", Toast.LENGTH_SHORT).show();
-            sceneviewcard.setStrokeColor(R.color.stroke);
+            sceneviewcard.setStrokeColor(R.color.myyellow);
+            sceneviewcard.setStrokeWidth(25);
 
-            textviewcard.setStrokeColor(R.color.NoStroke);
-            currencyviewcard.setStrokeColor(R.color.NoStroke);
-            qrcodeviewcard.setStrokeColor(R.color.NoStroke);
-            criticalviewcard.setStrokeColor(R.color.NoStroke);
+//            textviewcard.setStrokeColor(R.color.NoStroke);
+//            currencyviewcard.setStrokeColor(R.color.NoStroke);
+//            qrcodeviewcard.setStrokeColor(R.color.NoStroke);
+//            criticalviewcard.setStrokeColor(R.color.NoStroke);
+            textviewcard.setStrokeWidth(0);
+            currencyviewcard.setStrokeWidth(0);
+            qrcodeviewcard.setStrokeWidth(0);
+            criticalviewcard.setStrokeWidth(0);
 
             mTTS.speak("Scene Detection", TextToSpeech.QUEUE_FLUSH, null);
 
@@ -368,6 +410,8 @@ public class FypActivity extends AppCompatActivity {
             nextitem();
         }
     }
+
+    // onActivityresult is the defualt function and it is override and used to capture image and save in the bitmap for further use
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
@@ -429,6 +473,9 @@ public class FypActivity extends AppCompatActivity {
         }
     }
 
+    //this function is used for the detecing the image from the camera and detct the scene and speck it out depending upon the results
+    //from the results of out models
+
     private void setLabelerFromLocalModelforscene(Bitmap imageBitmap) {
         localModel1 = new FirebaseAutoMLLocalModel.Builder()
                 .setAssetFilePath("model/manifest1.json")
@@ -446,9 +493,6 @@ public class FypActivity extends AppCompatActivity {
             // ...
         }
     }
-
-
-
     private void processImageLabeler1(FirebaseVisionImageLabeler labeler1, FirebaseVisionImage image) {
         labeler1.processImage(image).addOnCompleteListener(new OnCompleteListener<List<FirebaseVisionImageLabel>>() {
             @Override
@@ -463,6 +507,10 @@ public class FypActivity extends AppCompatActivity {
                         tempscene = eachlabel;
                     }
                 }
+
+                // these confidence will override the previous confidence if the current confidence is more than
+                // the previous one and save it for the finall speech
+
                 myconfidencescene=temp1;
                 myscene=tempscene;
                 if(myconfidencescene<0.50){
@@ -479,14 +527,13 @@ public class FypActivity extends AppCompatActivity {
                 Toast.makeText(FypActivity.this, "Something went wrong! " + e, Toast.LENGTH_SHORT).show();
             }
         });
-
-
     }
+
+    //If the percentage of confidence on the scene is less than 50% then we are sending image to the
+    //firebase and detect the objects in it by sending it to firebase and getting the resuts back from it
 
     private void detectobjecttotell(Bitmap bitmap) {
         //////// object detection ///////////
-
-
         FirebaseVisionImage image = null;
         image = FirebaseVisionImage.fromBitmap(bitmap);
 
@@ -509,9 +556,7 @@ public class FypActivity extends AppCompatActivity {
                     objectdetected=objectdetected+text;
                     objectdetected=objectdetected+"  ";
                 }
-
                 mTTS.speak("I am not sure about scene but i see "+objectdetected, TextToSpeech.QUEUE_FLUSH, null);
-
             }
         })
                 .addOnFailureListener(new OnFailureListener() {
@@ -525,14 +570,20 @@ public class FypActivity extends AppCompatActivity {
         ///////// object detection //////////
     }
 
+    // Here is the function to read the content from the qrcode this function will be called from the image picked
+    //This will send the qr-code to the firebase and it will send the content back to us and speech it aloud
+
     private void qrcodereader(Bitmap bitmap) {
         ///////////Bar code/////////////////
 
         qrdatatospeak="";
-
-        FirebaseVisionBarcodeDetector detector = FirebaseVision.getInstance()
-                .getVisionBarcodeDetector();
-
+        FirebaseVisionBarcodeDetectorOptions options =
+                new FirebaseVisionBarcodeDetectorOptions.Builder()
+                        .setBarcodeFormats(
+                                FirebaseVisionBarcode.FORMAT_QR_CODE)
+                        .build();
+        detector = FirebaseVision.getInstance()
+                .getVisionBarcodeDetector(options);
         final Task<List<FirebaseVisionBarcode>> result = detector.
                 detectInImage(FirebaseVisionImage.fromBitmap(bitmap));
         result.addOnSuccessListener(new OnSuccessListener<List<FirebaseVisionBarcode>>() {
@@ -543,16 +594,10 @@ public class FypActivity extends AppCompatActivity {
                             Toast.makeText(FypActivity.this, "Detecting Objects", Toast.LENGTH_SHORT).show();
                             Log.d("FirebaseVisionBarcode", "Bounds " + bounds);
                             Point[] corners = barcode.getCornerPoints();
-
                             Log.d("FirebaseVisionBarcode", "Corners " + corners);
-
                             String rawValue = barcode.getRawValue();
-
                             qrdatatospeak = rawValue;
-
                             Log.d("FirebaseVisionBarcode", "RawValue " + rawValue);
-
-
                             int valueType = barcode.getValueType();
                             switch (valueType) {
                                 case FirebaseVisionBarcode.TYPE_WIFI:
@@ -596,12 +641,13 @@ public class FypActivity extends AppCompatActivity {
                         Log.d("FirebaseVisionBarcode", "Error " + e);
                     }
                 });
-
         //////////////bar code////////////
-
-
     }
 
+    //This function will be called when user want to detect the critical information like expiry date, manufacture date
+    //and other critical infomation like this
+    //There information will be detected on the basis of the content we get back from the firebase
+    
     private void detecttextfromimageforcriticaldata(Bitmap imageBitmap) {
         FirebaseVisionImage image = FirebaseVisionImage.fromBitmap(imageBitmap);
         FirebaseVisionDocumentTextRecognizer detector = FirebaseVision.getInstance().getCloudDocumentTextRecognizer();
@@ -632,50 +678,56 @@ public class FypActivity extends AppCompatActivity {
             for (String s : expirydate) {
                 if (small.contains(s)) {
                     x = 1;
-                    mTTS.speak(gotexpirydate, TextToSpeech.QUEUE_FLUSH, null);
+                    mTTS.speak(gotexpirydate+" "+small, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(FypActivity.this, "I Got Expiry", Toast.LENGTH_SHORT).show();
                 }
             }
             for (String warninglabel : warninglabels) {
                 if (small.contains(warninglabel)) {
                     x = 1;
-                    mTTS.speak(gotwarninglabels, TextToSpeech.QUEUE_FLUSH, null);
+                    mTTS.speak(gotwarninglabels+" "+small, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(FypActivity.this, "I Got warning", Toast.LENGTH_SHORT).show();
+
                 }
             }
             for (String s : proteinchart) {
                 if (small.contains(s)) {
                     x = 1;
-                    mTTS.speak(gotproteinchart, TextToSpeech.QUEUE_FLUSH, null);
+                    mTTS.speak(gotproteinchart+" "+small, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(FypActivity.this, "I Got Protein", Toast.LENGTH_SHORT).show();
+
                 }
             }
             for (String s : mfgdate) {
                 if (small.contains(s)) {
                     x = 1;
-                    mTTS.speak(gotmfgdate, TextToSpeech.QUEUE_FLUSH, null);
+                    mTTS.speak(gotmfgdate+" "+small, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(FypActivity.this, "I Got mfgdate", Toast.LENGTH_SHORT).show();
+
                 }
             }
             for (String s : bestbeforedate) {
                 if (small.contains(s)) {
                     x = 1;
-                    mTTS.speak(gotbestbeforedate, TextToSpeech.QUEUE_FLUSH, null);
+                    mTTS.speak(gotbestbeforedate+" "+small, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(FypActivity.this, "I Got bestbeforedate", Toast.LENGTH_SHORT).show();
+
                 }
             }
             for (String s : cautionmessage) {
                 if (small.contains(s)) {
                     x = 1;
-                    mTTS.speak(gotcaution, TextToSpeech.QUEUE_FLUSH, null);
+                    mTTS.speak(gotcaution+" "+small, TextToSpeech.QUEUE_FLUSH, null);
                     Toast.makeText(FypActivity.this, "I Got caution", Toast.LENGTH_SHORT).show();
+
                 }
             }
             for (String ingredient : ingredients) {
                 if (small.contains(ingredient)) {
                     x = 1;
-                    mTTS.speak(gotingredient, TextToSpeech.QUEUE_FLUSH, null);
-                    Toast.makeText(FypActivity.this, "I Got ingridents", Toast.LENGTH_SHORT).show();
+                    mTTS.speak(gotingredient+" "+small, TextToSpeech.QUEUE_FLUSH, null);
+                    Toast.makeText(FypActivity.this, "I Got ingredients", Toast.LENGTH_SHORT).show();
+
                 }
             }
         }
@@ -683,6 +735,8 @@ public class FypActivity extends AppCompatActivity {
             mTTS.speak("There is no Critical Information", TextToSpeech.QUEUE_FLUSH, null);
         }
     }
+    
+    //This function will send iamge to firebaase and get the content back from the firebase
 
     private void detecttextfromimage() {
         FirebaseVisionImage image = FirebaseVisionImage.fromBitmap(imageBitmap);
@@ -729,6 +783,10 @@ public class FypActivity extends AppCompatActivity {
         long declaredLength=fileDescriptor.getDeclaredLength();
         return fileChannel.map(FileChannel.MapMode.READ_ONLY,startoffset,declaredLength);
     }
+    
+    // This is the function that will be called when we select the currency module. It will pass the bitmap to the model that is stored in the local storage 
+    // and send the result back on the basis of confidence and confidence will be overridden depending upon the probability
+    // and speech the currency notes
 
     private void setLabelerFromLocalModel(Uri uri) {
         localModel = new FirebaseAutoMLLocalModel.Builder()
@@ -747,7 +805,6 @@ public class FypActivity extends AppCompatActivity {
             // ...
         }
     }
-
     private void processImageLabeler(FirebaseVisionImageLabeler labeler,
                                      FirebaseVisionImage image) {
         labeler.processImage(image).addOnCompleteListener(new OnCompleteListener<List<FirebaseVisionImageLabel>>() {
@@ -777,6 +834,8 @@ public class FypActivity extends AppCompatActivity {
             }
         });
     }
+    
+    //this function will be called upon the final selection of the currency note and speak it up
 
     private void speakfornote() {
         Log.i("Note", mynote);
